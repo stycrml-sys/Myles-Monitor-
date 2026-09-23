@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - claude/personal-fitness-tracker-yi4lgr
   workflow_dispatch:
 
 permissions:
