@@ -16,6 +16,24 @@ spotting patterns over time.
 - All data is stored locally in the browser (no account, no server). Back it up
   or move it to another device from Settings → Export/Import.
 
+## Fitness tracker (`/fitness/`)
+
+A second, separate app in the same build — a daily fitness insights tracker at
+`/Myles-Monitor-/fitness/`.
+
+- **Today** — log your daily weight and push-ups (tap +5/+10/… per set, or a
+  custom count). Back-fill any past day with the date picker.
+- **Photos** — one waist and one arms photo per week. Compare any week against an
+  earlier one side by side or with a before/after slider. With a Claude API key
+  (Settings), "Analyse changes" writes notes on visible differences and flags
+  lighting/pose inconsistencies.
+- **Trends** — weight chart (daily weigh-ins + 7-day average + goal line),
+  average push-ups per day by week, a week-by-week table, and automatic insights:
+  weekly weight change, 4-week rate and ETA to goal, suspicious day-to-day
+  swings, too-fast loss, push-up streaks, records and week-over-week change.
+- Data stays on the device (localStorage; photos in IndexedDB). Export/Import in
+  Settings includes photos; the API key is never exported.
+
 ## Development
 
 ```bash
