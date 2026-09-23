@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button } from '../../components/ui/Button'
-import { inputClass } from '../../components/ui/Field'
-import { EmptyState } from '../../components/ui/EntryRow'
+import { Button } from '../components/ui/Button'
+import { inputClass } from '../components/ui/Field'
+import { EmptyState } from '../components/ui/EmptyState'
 import { Card, InsightList } from '../components/Chrome'
 import { genId } from '../storage'
 import {

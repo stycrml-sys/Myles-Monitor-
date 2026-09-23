@@ -1,38 +1,29 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { AppData, FeedEntry, SleepEntry, ToiletingEntry } from './types'
+import { clearPhotos, deletePhoto, getPhoto, putPhoto } from './photoStore'
+import type { FitnessData, FitnessSettings, PhotoCheckin, PushupEntry, WeightEntry } from './types'
 
-const STORAGE_KEY = 'myles-monitor:data:v1'
+const STORAGE_KEY = 'fitness-tracker:data:v1'
 
-function defaultBirthDate(): string {
-  const d = new Date()
-  d.setDate(d.getDate() - 4)
-  return d.toISOString().slice(0, 10)
+function defaultSettings(): FitnessSettings {
+  return { name: '', unit: 'kg', goalWeightKg: null, pushupGoal: null, apiKey: '' }
 }
 
-function defaultData(): AppData {
+function normalize(parsed: Partial<FitnessData>): FitnessData {
   return {
     version: 1,
-    baby: { name: 'Myles', birthDate: defaultBirthDate() },
-    feeds: [],
-    toileting: [],
-    sleep: [],
+    settings: { ...defaultSettings(), ...parsed.settings },
+    weights: parsed.weights ?? [],
+    pushups: parsed.pushups ?? [],
+    checkins: parsed.checkins ?? [],
   }
 }
 
-function loadData(): AppData {
+function loadData(): FitnessData {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return defaultData()
-    const parsed = JSON.parse(raw) as Partial<AppData>
-    return {
-      version: 1,
-      baby: parsed.baby ?? defaultData().baby,
-      feeds: parsed.feeds ?? [],
-      toileting: parsed.toileting ?? [],
-      sleep: parsed.sleep ?? [],
-    }
+    return normalize(raw ? (JSON.parse(raw) as Partial<FitnessData>) : {})
   } catch {
-    return defaultData()
+    return normalize({})
   }
 }
 
@@ -40,88 +31,100 @@ export function genId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`
 }
 
-export function useAppData() {
-  const [data, setData] = useState<AppData>(() => loadData())
+const byDateDesc = <T extends { date: string }>(a: T, b: T) => b.date.localeCompare(a.date)
+
+export function useFitnessData() {
+  const [data, setData] = useState<FitnessData>(() => loadData())
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
   }, [data])
 
-  const setBaby = useCallback((baby: AppData['baby']) => {
-    setData((d) => ({ ...d, baby }))
+  const setSettings = useCallback((settings: FitnessSettings) => {
+    setData((d) => ({ ...d, settings }))
   }, [])
 
-  const addFeed = useCallback((entry: FeedEntry) => {
-    setData((d) => ({ ...d, feeds: [entry, ...d.feeds] }))
-  }, [])
-  const updateFeed = useCallback((entry: FeedEntry) => {
-    setData((d) => ({ ...d, feeds: d.feeds.map((e) => (e.id === entry.id ? entry : e)) }))
-  }, [])
-  const deleteFeed = useCallback((id: string) => {
-    setData((d) => ({ ...d, feeds: d.feeds.filter((e) => e.id !== id) }))
-  }, [])
-
-  const addToileting = useCallback((entry: ToiletingEntry) => {
-    setData((d) => ({ ...d, toileting: [entry, ...d.toileting] }))
-  }, [])
-  const updateToileting = useCallback((entry: ToiletingEntry) => {
+  // One weight per day: saving a date that already has a weight replaces it.
+  const saveWeight = useCallback((entry: WeightEntry) => {
     setData((d) => ({
       ...d,
-      toileting: d.toileting.map((e) => (e.id === entry.id ? entry : e)),
+      weights: [entry, ...d.weights.filter((w) => w.id !== entry.id && w.date !== entry.date)].sort(
+        byDateDesc,
+      ),
     }))
   }, [])
-  const deleteToileting = useCallback((id: string) => {
-    setData((d) => ({ ...d, toileting: d.toileting.filter((e) => e.id !== id) }))
+  const deleteWeight = useCallback((id: string) => {
+    setData((d) => ({ ...d, weights: d.weights.filter((w) => w.id !== id) }))
   }, [])
 
-  const addSleep = useCallback((entry: SleepEntry) => {
-    setData((d) => ({ ...d, sleep: [entry, ...d.sleep] }))
+  // One push-up entry per day; the form edits the day's sets as a whole.
+  const savePushups = useCallback((entry: PushupEntry) => {
+    setData((d) => ({
+      ...d,
+      pushups: [entry, ...d.pushups.filter((p) => p.id !== entry.id && p.date !== entry.date)].sort(
+        byDateDesc,
+      ),
+    }))
   }, [])
-  const updateSleep = useCallback((entry: SleepEntry) => {
-    setData((d) => ({ ...d, sleep: d.sleep.map((e) => (e.id === entry.id ? entry : e)) }))
-  }, [])
-  const deleteSleep = useCallback((id: string) => {
-    setData((d) => ({ ...d, sleep: d.sleep.filter((e) => e.id !== id) }))
+  const deletePushups = useCallback((id: string) => {
+    setData((d) => ({ ...d, pushups: d.pushups.filter((p) => p.id !== id) }))
   }, [])
 
-  const exportData = useCallback(() => {
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+  const saveCheckin = useCallback((entry: PhotoCheckin) => {
+    setData((d) => ({
+      ...d,
+      checkins: [entry, ...d.checkins.filter((c) => c.id !== entry.id)].sort((a, b) =>
+        b.weekStart.localeCompare(a.weekStart),
+      ),
+    }))
+  }, [])
+  const deleteCheckin = useCallback((entry: PhotoCheckin) => {
+    for (const id of Object.values(entry.photos)) if (id) void deletePhoto(id)
+    setData((d) => ({ ...d, checkins: d.checkins.filter((c) => c.id !== entry.id) }))
+  }, [])
+
+  const exportData = useCallback(async () => {
+    const photos: Record<string, string> = {}
+    for (const c of data.checkins) {
+      for (const id of Object.values(c.photos)) {
+        const url = id ? await getPhoto(id) : undefined
+        if (id && url) photos[id] = url
+      }
+    }
+    // Never write the API key into a backup file.
+    const backup = { ...data, settings: { ...data.settings, apiKey: '' }, photos }
+    const blob = new Blob([JSON.stringify(backup)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    const stamp = new Date().toISOString().slice(0, 10)
     a.href = url
-    a.download = `myles-monitor-backup-${stamp}.json`
+    a.download = `fitness-backup-${new Date().toISOString().slice(0, 10)}.json`
     a.click()
     URL.revokeObjectURL(url)
   }, [data])
 
-  const importData = useCallback((json: string) => {
-    const parsed = JSON.parse(json) as Partial<AppData>
-    setData({
-      version: 1,
-      baby: parsed.baby ?? defaultData().baby,
-      feeds: parsed.feeds ?? [],
-      toileting: parsed.toileting ?? [],
-      sleep: parsed.sleep ?? [],
+  const importData = useCallback(async (json: string) => {
+    const parsed = JSON.parse(json) as Partial<FitnessData> & { photos?: Record<string, string> }
+    for (const [id, url] of Object.entries(parsed.photos ?? {})) await putPhoto(id, url)
+    setData((d) => {
+      const next = normalize(parsed)
+      return { ...next, settings: { ...next.settings, apiKey: d.settings.apiKey } }
     })
   }, [])
 
   const clearAll = useCallback(() => {
-    setData((d) => ({ ...defaultData(), baby: d.baby }))
+    void clearPhotos()
+    setData((d) => ({ ...normalize({}), settings: d.settings }))
   }, [])
 
   return {
     data,
-    setBaby,
-    addFeed,
-    updateFeed,
-    deleteFeed,
-    addToileting,
-    updateToileting,
-    deleteToileting,
-    addSleep,
-    updateSleep,
-    deleteSleep,
+    setSettings,
+    saveWeight,
+    deleteWeight,
+    savePushups,
+    deletePushups,
+    saveCheckin,
+    deleteCheckin,
     exportData,
     importData,
     clearAll,

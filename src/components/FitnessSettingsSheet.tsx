@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { Sheet } from '../../components/ui/Sheet'
-import { Field, inputClass } from '../../components/ui/Field'
-import { Button } from '../../components/ui/Button'
-import { SegmentedControl } from '../../components/ui/SegmentedControl'
+import { Sheet } from './ui/Sheet'
+import { Field, inputClass } from './ui/Field'
+import { Button } from './ui/Button'
+import { SegmentedControl } from './ui/SegmentedControl'
 import { kgToUnit, unitToKg } from '../insights'
 import type { FitnessSettings, WeightUnit } from '../types'
 

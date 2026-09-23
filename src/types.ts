@@ -1,79 +1,46 @@
-export type Side = 'left' | 'right'
+export type WeightUnit = 'kg' | 'lb'
 
-export type FeedExtent = 'little' | 'some' | 'full'
-
-export interface FeedSideDetail {
-  durationMin: number
-  extent: FeedExtent
-}
-
-export interface FeedEntry {
+export interface WeightEntry {
   id: string
-  kind: 'feed'
-  startTime: string // ISO datetime
-  endTime: string // ISO datetime
-  left: FeedSideDetail | null
-  right: FeedSideDetail | null
+  date: string // yyyy-mm-dd (one entry per day)
+  weightKg: number
   comment: string
-  createdAt: string
-  updatedAt: string
 }
 
-export type ToiletingType = 'wee' | 'poo' | 'both'
-
-export type PooColour =
-  | 'black' // meconium
-  | 'dark-green'
-  | 'green'
-  | 'yellow'
-  | 'brown'
-  | 'red'
-  | 'white-pale'
-
-export type PooConsistency = 'sticky-tarry' | 'seedy-soft' | 'runny' | 'formed' | 'hard'
-
-export interface ToiletingEntry {
+export interface PushupEntry {
   id: string
-  kind: 'toileting'
-  time: string // ISO datetime
-  type: ToiletingType
-  pooColour: PooColour | null
-  pooConsistency: PooConsistency | null
+  date: string // yyyy-mm-dd
+  sets: number[] // reps per set
   comment: string
-  createdAt: string
-  updatedAt: string
 }
 
-export type SleepQuality = 1 | 2 | 3 | 4 | 5
+export type BodyArea = 'waist' | 'arms'
 
-export interface SleepEntry {
+export interface PhotoCheckin {
   id: string
-  kind: 'sleep'
-  startTime: string // ISO datetime
-  endTime: string // ISO datetime
-  quality: SleepQuality
-  interruptions: number
-  interruptionNotes: string
+  weekStart: string // yyyy-mm-dd (Monday of the week)
+  date: string // yyyy-mm-dd the photos were taken
+  // Photo blobs live in IndexedDB under these keys.
+  photos: Partial<Record<BodyArea, string>>
   comment: string
-  createdAt: string
-  updatedAt: string
+  aiNotes: string | null
+  aiNotesAt: string | null
 }
 
-export type AnyEntry = FeedEntry | ToiletingEntry | SleepEntry
-
-export interface BabyProfile {
+export interface FitnessSettings {
   name: string
-  birthDate: string // ISO date (yyyy-mm-dd)
+  unit: WeightUnit
+  goalWeightKg: number | null
+  pushupGoal: number | null // daily reps
+  apiKey: string
 }
 
-export interface AppData {
+export interface FitnessData {
   version: 1
-  baby: BabyProfile
-  feeds: FeedEntry[]
-  toileting: ToiletingEntry[]
-  sleep: SleepEntry[]
+  settings: FitnessSettings
+  weights: WeightEntry[]
+  pushups: PushupEntry[]
+  checkins: PhotoCheckin[]
 }
 
-export type TabKey = 'feed' | 'toileting' | 'sleep' | 'trends'
-
-export type TrendGranularity = 'hour' | 'day' | 'week' | 'month'
+export type FitnessTab = 'today' | 'photos' | 'trends'

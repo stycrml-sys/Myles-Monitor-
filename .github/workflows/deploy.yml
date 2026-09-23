@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - claude/myles-monitor-newborn-app-w74zr4
       - claude/personal-fitness-tracker-yi4lgr
   workflow_dispatch:
 
