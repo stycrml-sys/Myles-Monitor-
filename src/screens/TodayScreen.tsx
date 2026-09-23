@@ -3,6 +3,7 @@ import { Button } from '../components/ui/Button'
 import { inputClass } from '../components/ui/Field'
 import { EmptyState } from '../components/ui/EmptyState'
 import { Card, InsightList } from '../components/Chrome'
+import { useConfirm } from '../components/useConfirm'
 import { genId } from '../storage'
 import {
   buildInsights,
@@ -30,6 +31,7 @@ export function TodayScreen({
   onSavePushups: (e: PushupEntry) => void
   onDeletePushups: (id: string) => void
 }) {
+  const confirm = useConfirm()
   const { unit } = data.settings
   const [day, setDay] = useState(dateKey())
   const weight = data.weights.find((w) => w.date === day)
@@ -118,7 +120,7 @@ export function TodayScreen({
         {weight && (
           <button
             className="mt-2 text-xs text-slate-400"
-            onClick={() => window.confirm('Delete this weight entry?') && onDeleteWeight(weight.id)}
+            onClick={async () => (await confirm('Delete this weight entry?')) && onDeleteWeight(weight.id)}
           >
             Delete entry
           </button>

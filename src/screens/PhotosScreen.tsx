@@ -5,8 +5,10 @@ import { inputClass } from '../components/ui/Field'
 import { Card } from '../components/Chrome'
 import { usePhoto } from '../components/usePhoto'
 import { genId } from '../storage'
-import { fileToJpegDataUrl, getPhoto, putPhoto } from '../photoStore'
-import type { PhotoPair } from '../photoAnalysis'
+import { useConfirm } from '../components/useConfirm'
+import { fileToJpegBlob } from '../photoStore'
+import { buildAnalysisRequest, type PhotoPair } from '../photoPrompt'
+import type { Platform } from '../platform'
 import {
   dateKey,
   formatWeekLabel,
@@ -25,15 +27,18 @@ type CompareMode = 'side' | 'slider'
 
 export function PhotosScreen({
   data,
+  platform,
   onSave,
   onDelete,
   onOpenSettings,
 }: {
   data: FitnessData
+  platform: Platform
   onSave: (c: PhotoCheckin) => void
   onDelete: (c: PhotoCheckin) => void
   onOpenSettings: () => void
 }) {
+  const confirm = useConfirm()
   const currentWeek = weekStartKey(dateKey())
   const [week, setWeek] = useState(currentWeek)
   const checkin = data.checkins.find((c) => c.weekStart === week)
@@ -49,10 +54,14 @@ export function PhotosScreen({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const [uploading, setUploading] = useState<BodyArea | null>(null)
+  const canAnalyse = !!platform.analyze || !!data.settings.apiKey
+
   const upload = async (area: BodyArea, file: File) => {
     setError(null)
+    setUploading(area)
     try {
-      const url = await fileToJpegDataUrl(file)
+      const blob = await fileToJpegBlob(file)
       const base: PhotoCheckin = checkin ?? {
         id: genId(),
         weekStart: week,
@@ -62,12 +71,15 @@ export function PhotosScreen({
         aiNotes: null,
         aiNotesAt: null,
       }
-      const photoId = `${base.id}-${area}-${Date.now().toString(36)}`
-      await putPhoto(photoId, url)
+      const previous = base.photos[area]
+      const photoId = await platform.savePhoto(blob)
+      if (previous) void platform.deletePhoto(previous)
       // A new photo makes any previous AI notes stale.
       onSave({ ...base, photos: { ...base.photos, [area]: photoId }, aiNotes: null, aiNotesAt: null })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save that photo.')
+    } finally {
+      setUploading(null)
     }
   }
 
@@ -75,15 +87,13 @@ export function PhotosScreen({
     if (!checkin || !compareTo) return
     setBusy(true)
     setError(null)
-    // Loaded on demand so the Claude SDK isn't in the initial bundle.
-    const { analyzePhotos, describeError } = await import('../photoAnalysis')
     try {
       const pairs: PhotoPair[] = []
       for (const { key } of AREAS) {
         const beforeId = compareTo.photos[key]
         const afterId = checkin.photos[key]
         if (!beforeId || !afterId) continue
-        const [before, after] = await Promise.all([getPhoto(beforeId), getPhoto(afterId)])
+        const [before, after] = await Promise.all([platform.photoBlob(beforeId), platform.photoBlob(afterId)])
         if (before && after) pairs.push({ area: key, before, after })
       }
       if (!pairs.length) throw new Error('Need the same body area photographed in both weeks.')
@@ -99,14 +109,24 @@ export function PhotosScreen({
           ? `For context, average scale weight went from ${formatWeight(a, data.settings.unit)} to ${formatWeight(b, data.settings.unit)}.`
           : ''
 
-      const notes = await analyzePhotos(data.settings.apiKey, pairs, {
+      const context = {
         beforeLabel: formatWeekLabel(compareTo.weekStart),
         afterLabel: formatWeekLabel(checkin.weekStart),
         weightNote,
-      })
+      }
+      let notes: string
+      if (platform.analyze) {
+        notes = await platform.analyze(buildAnalysisRequest(pairs, context))
+      } else {
+        // Loaded on demand so the Claude SDK isn't in the initial bundle.
+        const { analyzePhotos, describeError } = await import('../photoAnalysis')
+        notes = await analyzePhotos(data.settings.apiKey, pairs, context).catch((e: unknown) => {
+          throw new Error(describeError(e))
+        })
+      }
       onSave({ ...checkin, aiNotes: `Compared with the ${formatWeekLabel(compareTo.weekStart).replace('Week', 'week')}:\n\n${notes}`, aiNotesAt: new Date().toISOString() })
     } catch (e) {
-      setError(describeError(e))
+      setError(e instanceof Error ? e.message : 'Something went wrong. Try again.')
     } finally {
       setBusy(false)
     }
@@ -150,6 +170,7 @@ export function PhotosScreen({
               label={a.label}
               hint={a.hint}
               photoId={checkin?.photos[a.key]}
+              busy={uploading === a.key}
               onFile={(f) => upload(a.key, f)}
             />
           ))}
@@ -208,10 +229,12 @@ export function PhotosScreen({
           </div>
 
           <div className="mt-4 border-t border-slate-100 pt-4 dark:border-slate-800">
-            {data.settings.apiKey ? (
+            {canAnalyse ? (
               <Button className="w-full" onClick={runAnalysis} disabled={busy}>
                 {busy ? 'Analysing…' : checkin.aiNotes ? '✨ Re-analyse changes' : '✨ Analyse changes with Claude'}
               </Button>
+            ) : platform.kind === 'artifact' ? (
+              <p className="text-xs text-slate-400">Written photo notes aren't available in this view.</p>
             ) : (
               <p className="text-xs text-slate-400">
                 Want written notes on visible changes?{' '}
@@ -259,7 +282,7 @@ export function PhotosScreen({
                 <button
                   className="text-slate-300 dark:text-slate-600"
                   aria-label="Delete check-in"
-                  onClick={() => window.confirm('Delete this check-in and its photos?') && onDelete(c)}
+                  onClick={async () => (await confirm('Delete this check-in and its photos?')) && onDelete(c)}
                 >
                   🗑
                 </button>
@@ -276,11 +299,13 @@ function PhotoSlot({
   label,
   hint,
   photoId,
+  busy,
   onFile,
 }: {
   label: string
   hint: string
   photoId: string | undefined
+  busy: boolean
   onFile: (f: File) => void
 }) {
   const url = usePhoto(photoId)
@@ -291,7 +316,9 @@ function PhotoSlot({
         onClick={() => inputRef.current?.click()}
         className="relative flex aspect-[3/4] w-full items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 active:scale-[0.98] dark:border-slate-700 dark:bg-slate-800"
       >
-        {url ? (
+        {busy ? (
+          <span className="text-xs font-medium text-slate-400">Uploading…</span>
+        ) : url ? (
           <>
             <img src={url} alt={label} className="h-full w-full object-cover" />
             <span className="absolute bottom-1.5 right-1.5 rounded-full bg-black/50 px-2 py-0.5 text-[11px] text-white">

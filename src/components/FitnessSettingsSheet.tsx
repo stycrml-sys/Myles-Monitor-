@@ -5,11 +5,14 @@ import { Button } from './ui/Button'
 import { SegmentedControl } from './ui/SegmentedControl'
 import { kgToUnit, unitToKg } from '../insights'
 import type { FitnessSettings, WeightUnit } from '../types'
+import type { Platform } from '../platform'
+import { useConfirm } from './useConfirm'
 
 export function FitnessSettingsSheet({
   open,
   onClose,
   settings,
+  platform,
   onSave,
   onExport,
   onImport,
@@ -18,6 +21,7 @@ export function FitnessSettingsSheet({
   open: boolean
   onClose: () => void
   settings: FitnessSettings
+  platform: Platform
   onSave: (s: FitnessSettings) => void
   onExport: () => Promise<void>
   onImport: (json: string) => Promise<void>
@@ -29,9 +33,13 @@ export function FitnessSettingsSheet({
   const [pushGoal, setPushGoal] = useState('')
   const [apiKey, setApiKey] = useState(settings.apiKey)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const confirm = useConfirm()
+  const [backupError, setBackupError] = useState<string | null>(null)
+  const [backupBusy, setBackupBusy] = useState(false)
 
   useEffect(() => {
     if (!open) return
+    setBackupError(null)
     setName(settings.name)
     setUnit(settings.unit)
     setGoal(
@@ -65,11 +73,15 @@ export function FitnessSettingsSheet({
   const handleImportFile = (file: File) => {
     const reader = new FileReader()
     reader.onload = async () => {
+      setBackupBusy(true)
+      setBackupError(null)
       try {
         await onImport(String(reader.result))
         onClose()
       } catch {
-        window.alert('That backup file could not be read.')
+        setBackupError('That backup file could not be read.')
+      } finally {
+        setBackupBusy(false)
       }
     }
     reader.readAsText(file)
@@ -113,20 +125,24 @@ export function FitnessSettingsSheet({
             />
           </Field>
         </div>
-        <Field label="Claude API key (for photo analysis)">
-          <input
-            type="password"
-            autoComplete="off"
-            className={inputClass}
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder="sk-ant-…"
-          />
-        </Field>
-        <p className="-mt-2 text-xs text-slate-400">
-          Optional. Stored only on this device and sent only to Anthropic when you tap “Analyse”.
-          Get one at console.anthropic.com. Each analysis costs a few cents.
-        </p>
+        {platform.kind === 'web' && (
+          <>
+            <Field label="Claude API key (for photo analysis)">
+              <input
+                type="password"
+                autoComplete="off"
+                className={inputClass}
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder="sk-ant-…"
+              />
+            </Field>
+            <p className="-mt-2 text-xs text-slate-400">
+              Optional. Stored only on this device and sent only to Anthropic when you tap “Analyse”.
+              Get one at console.anthropic.com. Each analysis costs a few cents.
+            </p>
+          </>
+        )}
         <Button onClick={save}>Save</Button>
 
         <div className="mt-2 border-t border-slate-100 pt-4 dark:border-slate-800">
@@ -134,11 +150,26 @@ export function FitnessSettingsSheet({
             Backup &amp; restore
           </h3>
           <p className="mb-3 text-xs text-slate-400">
-            All data and photos live only on this device. Export a backup regularly, or before
-            switching phones. (Your API key is never included.)
+            {platform.storageNote} Export a backup to keep your own copy
+            {platform.kind === 'web' ? ' (your API key is never included)' : ''}.
           </p>
           <div className="flex gap-2">
-            <Button variant="secondary" className="flex-1" onClick={() => void onExport()}>
+            <Button
+              variant="secondary"
+              className="flex-1"
+              disabled={backupBusy}
+              onClick={async () => {
+                setBackupBusy(true)
+                setBackupError(null)
+                try {
+                  await onExport()
+                } catch (e) {
+                  setBackupError(e instanceof Error ? e.message : "Couldn't export.")
+                } finally {
+                  setBackupBusy(false)
+                }
+              }}
+            >
               Export backup
             </Button>
             <Button variant="secondary" className="flex-1" onClick={() => fileInputRef.current?.click()}>
@@ -156,14 +187,16 @@ export function FitnessSettingsSheet({
               }}
             />
           </div>
+          {backupBusy && <p className="mt-2 text-xs text-slate-400">Working…</p>}
+          {backupError && <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{backupError}</p>}
         </div>
 
         <div className="border-t border-slate-100 pt-4 dark:border-slate-800">
           <Button
             variant="danger"
             className="w-full"
-            onClick={() => {
-              if (window.confirm('Delete all weights, push-ups and photos on this device? This cannot be undone.')) {
+            onClick={async () => {
+              if (await confirm('Delete all weights, push-ups and photos? This cannot be undone.', 'Delete everything')) {
                 onClearAll()
                 onClose()
               }

@@ -8,16 +8,28 @@ export const CHART_COLORS = {
   axis: '#898781',
 } as const
 
+const QUERY = '(prefers-color-scheme: dark)'
+
+function readIsDark(): boolean {
+  const theme = document.documentElement.dataset.theme
+  if (theme === 'dark') return true
+  if (theme === 'light') return false
+  return window.matchMedia(QUERY).matches
+}
+
+/** Dark mode from the OS, overridden by data-theme on <html> when present. */
 export function useIsDark(): boolean {
-  const query = '(prefers-color-scheme: dark)'
-  const [isDark, setIsDark] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia(query).matches,
-  )
+  const [isDark, setIsDark] = useState(() => typeof window !== 'undefined' && readIsDark())
   useEffect(() => {
-    const mql = window.matchMedia(query)
-    const listener = (e: MediaQueryListEvent) => setIsDark(e.matches)
-    mql.addEventListener('change', listener)
-    return () => mql.removeEventListener('change', listener)
+    const update = () => setIsDark(readIsDark())
+    const mql = window.matchMedia(QUERY)
+    mql.addEventListener('change', update)
+    const observer = new MutationObserver(update)
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+    return () => {
+      mql.removeEventListener('change', update)
+      observer.disconnect()
+    }
   }, [])
   return isDark
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getPhoto } from '../photoStore'
+import { getPlatform } from '../platform'
 
 export function usePhoto(id: string | undefined): string | undefined {
   const [url, setUrl] = useState<string | undefined>()
@@ -9,9 +9,11 @@ export function usePhoto(id: string | undefined): string | undefined {
       setUrl(undefined)
       return
     }
-    getPhoto(id).then((u) => {
-      if (!cancelled) setUrl(u)
-    })
+    getPlatform()
+      .then((p) => p.photoUrl(id))
+      .then((u) => {
+        if (!cancelled) setUrl(u)
+      })
     return () => {
       cancelled = true
     }

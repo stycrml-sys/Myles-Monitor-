@@ -1,9 +1,40 @@
 @import "tailwindcss";
 
+/* Dark mode follows the OS, unless the page is told otherwise via
+   data-theme on <html> (the claude.ai artifact viewer's theme switch). */
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme='light']) *) {
+      @slot;
+    }
+  }
+  &:where([data-theme='dark'] *) {
+    @slot;
+  }
+}
+
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
+  --bg: #f5f4fb;
+  --fg: #1e1b2e;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* Where sticky headers stop; the artifact build overrides these two. */
+  --sticky-top: 0px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --bg: #131120;
+    --fg: #ede9f7;
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #131120;
+  --fg: #ede9f7;
 }
 
 * {
@@ -18,15 +49,8 @@ body {
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  background: #f5f4fb;
-  color: #1e1b2e;
-}
-
-@media (prefers-color-scheme: dark) {
-  body {
-    background: #131120;
-    color: #ede9f7;
-  }
+  background: var(--bg);
+  color: var(--fg);
 }
 
 #root {

@@ -1,8 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
-import { clearPhotos, deletePhoto, getPhoto, putPhoto } from './photoStore'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { blobToDataUrl, dataUrlToBlob, getPlatform, type Platform } from './platform'
 import type { FitnessData, FitnessSettings, PhotoCheckin, PushupEntry, WeightEntry } from './types'
-
-const STORAGE_KEY = 'fitness-tracker:data:v1'
 
 function defaultSettings(): FitnessSettings {
   return { name: '', unit: 'kg', goalWeightKg: null, pushupGoal: null, apiKey: '' }
@@ -18,105 +16,168 @@ function normalize(parsed: Partial<FitnessData>): FitnessData {
   }
 }
 
-function loadData(): FitnessData {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    return normalize(raw ? (JSON.parse(raw) as Partial<FitnessData>) : {})
-  } catch {
-    return normalize({})
-  }
-}
-
 export function genId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`
 }
 
 const byDateDesc = <T extends { date: string }>(a: T, b: T) => b.date.localeCompare(a.date)
 
+function photoIds(checkins: PhotoCheckin[]): string[] {
+  return checkins.flatMap((c) => Object.values(c.photos).filter((id): id is string => !!id))
+}
+
 export function useFitnessData() {
-  const [data, setData] = useState<FitnessData>(() => loadData())
+  const [platform, setPlatform] = useState<Platform | null>(null)
+  const [data, setData] = useState<FitnessData | null>(null)
+  // JSON of what the store already holds, so we only write real changes.
+  const savedJson = useRef<string | null>(null)
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
-  }, [data])
-
-  const setSettings = useCallback((settings: FitnessSettings) => {
-    setData((d) => ({ ...d, settings }))
+    let cancelled = false
+    ;(async () => {
+      const p = await getPlatform()
+      const loaded = normalize((await p.load().catch(() => null)) ?? {})
+      if (cancelled) return
+      savedJson.current = JSON.stringify(loaded)
+      setPlatform(p)
+      setData(loaded)
+    })()
+    return () => {
+      cancelled = true
+    }
   }, [])
+
+  useEffect(() => {
+    if (!platform || !data) return
+    const json = JSON.stringify(data)
+    if (json === savedJson.current) return
+    // Coalesce bursts of edits (typing a note, tapping +10 repeatedly).
+    const t = setTimeout(() => {
+      savedJson.current = json
+      void platform.save(data)
+    }, 600)
+    return () => clearTimeout(t)
+  }, [platform, data])
+
+  // Pick up changes made on another device when the page comes back into view.
+  useEffect(() => {
+    if (!platform || platform.kind !== 'artifact') return
+    const onVisible = async () => {
+      if (document.visibilityState !== 'visible') return
+      const remote = await platform.load().catch(() => null)
+      if (!remote) return
+      const next = normalize(remote)
+      const json = JSON.stringify(next)
+      if (json === savedJson.current) return
+      savedJson.current = json
+      setData(next)
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [platform])
+
+  const update = useCallback((fn: (d: FitnessData) => FitnessData) => {
+    setData((d) => (d ? fn(d) : d))
+  }, [])
+
+  const setSettings = useCallback(
+    (settings: FitnessSettings) => update((d) => ({ ...d, settings })),
+    [update],
+  )
 
   // One weight per day: saving a date that already has a weight replaces it.
-  const saveWeight = useCallback((entry: WeightEntry) => {
-    setData((d) => ({
-      ...d,
-      weights: [entry, ...d.weights.filter((w) => w.id !== entry.id && w.date !== entry.date)].sort(
-        byDateDesc,
-      ),
-    }))
-  }, [])
-  const deleteWeight = useCallback((id: string) => {
-    setData((d) => ({ ...d, weights: d.weights.filter((w) => w.id !== id) }))
-  }, [])
+  const saveWeight = useCallback(
+    (entry: WeightEntry) =>
+      update((d) => ({
+        ...d,
+        weights: [entry, ...d.weights.filter((w) => w.id !== entry.id && w.date !== entry.date)].sort(
+          byDateDesc,
+        ),
+      })),
+    [update],
+  )
+  const deleteWeight = useCallback(
+    (id: string) => update((d) => ({ ...d, weights: d.weights.filter((w) => w.id !== id) })),
+    [update],
+  )
 
   // One push-up entry per day; the form edits the day's sets as a whole.
-  const savePushups = useCallback((entry: PushupEntry) => {
-    setData((d) => ({
-      ...d,
-      pushups: [entry, ...d.pushups.filter((p) => p.id !== entry.id && p.date !== entry.date)].sort(
-        byDateDesc,
-      ),
-    }))
-  }, [])
-  const deletePushups = useCallback((id: string) => {
-    setData((d) => ({ ...d, pushups: d.pushups.filter((p) => p.id !== id) }))
-  }, [])
+  const savePushups = useCallback(
+    (entry: PushupEntry) =>
+      update((d) => ({
+        ...d,
+        pushups: [entry, ...d.pushups.filter((p) => p.id !== entry.id && p.date !== entry.date)].sort(
+          byDateDesc,
+        ),
+      })),
+    [update],
+  )
+  const deletePushups = useCallback(
+    (id: string) => update((d) => ({ ...d, pushups: d.pushups.filter((p) => p.id !== id) })),
+    [update],
+  )
 
-  const saveCheckin = useCallback((entry: PhotoCheckin) => {
-    setData((d) => ({
-      ...d,
-      checkins: [entry, ...d.checkins.filter((c) => c.id !== entry.id)].sort((a, b) =>
-        b.weekStart.localeCompare(a.weekStart),
-      ),
-    }))
-  }, [])
-  const deleteCheckin = useCallback((entry: PhotoCheckin) => {
-    for (const id of Object.values(entry.photos)) if (id) void deletePhoto(id)
-    setData((d) => ({ ...d, checkins: d.checkins.filter((c) => c.id !== entry.id) }))
-  }, [])
+  const saveCheckin = useCallback(
+    (entry: PhotoCheckin) =>
+      update((d) => ({
+        ...d,
+        checkins: [entry, ...d.checkins.filter((c) => c.id !== entry.id)].sort((a, b) =>
+          b.weekStart.localeCompare(a.weekStart),
+        ),
+      })),
+    [update],
+  )
+  const deleteCheckin = useCallback(
+    (entry: PhotoCheckin) => {
+      for (const id of photoIds([entry])) void platform?.deletePhoto(id)
+      update((d) => ({ ...d, checkins: d.checkins.filter((c) => c.id !== entry.id) }))
+    },
+    [platform, update],
+  )
 
   const exportData = useCallback(async () => {
+    if (!platform || !data) return
     const photos: Record<string, string> = {}
-    for (const c of data.checkins) {
-      for (const id of Object.values(c.photos)) {
-        const url = id ? await getPhoto(id) : undefined
-        if (id && url) photos[id] = url
-      }
+    for (const id of photoIds(data.checkins)) {
+      const blob = await platform.photoBlob(id).catch(() => undefined)
+      if (blob) photos[id] = await blobToDataUrl(blob)
     }
     // Never write the API key into a backup file.
     const backup = { ...data, settings: { ...data.settings, apiKey: '' }, photos }
-    const blob = new Blob([JSON.stringify(backup)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `fitness-backup-${new Date().toISOString().slice(0, 10)}.json`
-    a.click()
-    URL.revokeObjectURL(url)
-  }, [data])
+    await platform.saveFile(
+      `fitness-backup-${new Date().toISOString().slice(0, 10)}.json`,
+      JSON.stringify(backup),
+    )
+  }, [platform, data])
 
-  const importData = useCallback(async (json: string) => {
-    const parsed = JSON.parse(json) as Partial<FitnessData> & { photos?: Record<string, string> }
-    for (const [id, url] of Object.entries(parsed.photos ?? {})) await putPhoto(id, url)
-    setData((d) => {
+  const importData = useCallback(
+    async (json: string) => {
+      if (!platform) return
+      const parsed = JSON.parse(json) as Partial<FitnessData> & { photos?: Record<string, string> }
       const next = normalize(parsed)
-      return { ...next, settings: { ...next.settings, apiKey: d.settings.apiKey } }
-    })
-  }, [])
+      // Photos get new ids in this app's photo store; remap the check-ins to them.
+      const remap: Record<string, string> = {}
+      for (const [oldId, url] of Object.entries(parsed.photos ?? {})) {
+        remap[oldId] = await platform.savePhoto(await dataUrlToBlob(url))
+      }
+      next.checkins = next.checkins.map((c) => ({
+        ...c,
+        photos: Object.fromEntries(
+          Object.entries(c.photos).flatMap(([area, id]) => (id && remap[id] ? [[area, remap[id]]] : [])),
+        ),
+      }))
+      update((d) => ({ ...next, settings: { ...next.settings, apiKey: d.settings.apiKey } }))
+    },
+    [platform, update],
+  )
 
   const clearAll = useCallback(() => {
-    void clearPhotos()
-    setData((d) => ({ ...normalize({}), settings: d.settings }))
-  }, [])
+    if (data) void platform?.deleteAllPhotos(photoIds(data.checkins))
+    update((d) => ({ ...normalize({}), settings: d.settings }))
+  }, [platform, data, update])
 
   return {
+    platform,
     data,
     setSettings,
     saveWeight,

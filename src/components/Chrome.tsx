@@ -4,7 +4,7 @@ import type { Insight } from '../insights'
 
 export function FitnessHeader({ name, onSettings }: { name: string; onSettings: () => void }) {
   return (
-    <header className="sticky top-0 z-30 flex items-center justify-between border-b border-slate-200/70 bg-white/95 px-4 pb-3 pt-[calc(0.75rem+var(--safe-top))] backdrop-blur dark:border-slate-800 dark:bg-slate-900/95">
+    <header className="sticky top-[var(--sticky-top)] z-30 flex items-center justify-between border-b border-slate-200/70 bg-white/95 px-4 pb-3 pt-[calc(0.75rem+var(--safe-top))] backdrop-blur dark:border-slate-800 dark:bg-slate-900/95">
       <div>
         <h1 className="text-lg font-bold leading-tight text-slate-900 dark:text-slate-50">
           {name ? `${name}'s Fitness` : 'Fitness Tracker'}

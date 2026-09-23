@@ -1,28 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk'
-import type { BodyArea } from './types'
+import { blobToDataUrl } from './platform'
+import { SYSTEM_PROMPT, type AnalysisContext, type PhotoPair } from './photoPrompt'
 
-const SYSTEM_PROMPT = `You compare weekly progress photos for a personal fitness tracker. \
-The user trains with push-ups and tracks body weight. For each body area you receive the \
-earlier photo first and the later photo second.
-
-Describe visible differences plainly and briefly: waist (midsection size, definition, \
-how clothing/waistband sits) and arms (size, muscle definition, vascularity). Be honest \
-when change is not visible — small weekly changes usually aren't. Call out differences in \
-lighting, pose, distance, angle or pump that could make the comparison unreliable, and \
-suggest one tip to make next week's photos more consistent if needed. Don't estimate body \
-fat percentages or give medical advice.
-
-Format as plain text (it is shown as-is, so no markdown symbols like ** or #): a \
-"Waist:" line and an "Arms:" line (only for areas provided), each followed by 1-3 \
-"• " bullets, then a one-line "Overall:" takeaway. Keep it under 150 words.`
-
-export interface PhotoPair {
-  area: BodyArea
-  before: string // data URL
-  after: string // data URL
-}
-
-function imageBlock(dataUrl: string): Anthropic.Beta.BetaImageBlockParam {
+async function imageBlock(blob: Blob): Promise<Anthropic.Beta.BetaImageBlockParam> {
+  const dataUrl = await blobToDataUrl(blob)
   const [, meta, data] = /^data:(image\/\w+);base64,(.*)$/.exec(dataUrl) ?? []
   return {
     type: 'image',
@@ -37,16 +18,16 @@ function imageBlock(dataUrl: string): Anthropic.Beta.BetaImageBlockParam {
 export async function analyzePhotos(
   apiKey: string,
   pairs: PhotoPair[],
-  context: { beforeLabel: string; afterLabel: string; weightNote: string },
+  context: AnalysisContext,
 ): Promise<string> {
   const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true })
 
   const content: Anthropic.Beta.BetaContentBlockParam[] = []
   for (const pair of pairs) {
     content.push({ type: 'text', text: `${pair.area.toUpperCase()} — earlier (${context.beforeLabel}):` })
-    content.push(imageBlock(pair.before))
+    content.push(await imageBlock(pair.before))
     content.push({ type: 'text', text: `${pair.area.toUpperCase()} — later (${context.afterLabel}):` })
-    content.push(imageBlock(pair.after))
+    content.push(await imageBlock(pair.after))
   }
   content.push({
     type: 'text',

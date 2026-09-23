@@ -29,3 +29,23 @@ npm run lint     # run oxlint
 
 Pushes to `main` deploy to GitHub Pages at
 `https://stycrml-sys.github.io/Myles-Monitor-/`.
+
+## claude.ai Artifact build
+
+The same app also ships as a claude.ai Artifact (its own private link,
+separate from GitHub Pages). `src/platform.ts` detects the artifact runtime
+and switches backends:
+
+| | Web (GitHub Pages) | Artifact |
+|---|---|---|
+| Data | localStorage | `db`, private per signed-in viewer, syncs across devices |
+| Photos | IndexedDB | `assets` |
+| Photo notes | your Claude API key | `sample` (your Claude account, no key) |
+| Backup export | browser download | `downloads` |
+
+```bash
+npm run build:artifact   # writes dist-artifact/artifact.html + assets/
+```
+
+Publish `dist-artifact/artifact.html` with the files in `dist-artifact/assets/`
+and the capabilities `db`, `user`, `assets`, `sample`, `downloads`.

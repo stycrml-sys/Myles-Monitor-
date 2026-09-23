@@ -1,5 +1,6 @@
-// Progress photos are too big for localStorage, so they live in IndexedDB as
-// downscaled JPEG data URLs keyed by id.
+// Web build: progress photos are too big for localStorage, so they live in
+// IndexedDB as downscaled JPEG data URLs keyed by id. (The artifact build
+// stores them as artifact assets instead; see platform.ts.)
 
 const DB_NAME = 'fitness-tracker'
 const STORE = 'photos'
@@ -39,8 +40,8 @@ export async function clearPhotos(): Promise<void> {
   await run('readwrite', (s) => s.clear())
 }
 
-/** Downscale an image file to a JPEG data URL (longest side `maxSide`). */
-export function fileToJpegDataUrl(file: File, maxSide = 1280, quality = 0.85): Promise<string> {
+/** Downscale an image file to a JPEG blob (longest side `maxSide`). */
+export function fileToJpegBlob(file: File, maxSide = 1280, quality = 0.85): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file)
     const img = new Image()
@@ -51,7 +52,11 @@ export function fileToJpegDataUrl(file: File, maxSide = 1280, quality = 0.85): P
       canvas.height = Math.round(img.height * scale)
       canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height)
       URL.revokeObjectURL(url)
-      resolve(canvas.toDataURL('image/jpeg', quality))
+      canvas.toBlob(
+        (blob) => (blob ? resolve(blob) : reject(new Error('Could not read that image.'))),
+        'image/jpeg',
+        quality,
+      )
     }
     img.onerror = () => {
       URL.revokeObjectURL(url)
