@@ -7,6 +7,10 @@ take weekly waist and arm progress photos, and see the trends.
 
 - **Today** — log your daily weight and push-ups (tap +5/+10/… per set, or a
   custom count). Back-fill any past day with the date picker.
+- **Food** — type what you ate ("an apple", "2 eggs, toast and a coffee") and
+  calories fill in automatically: common foods from a built-in table
+  (instant, offline), anything else estimated by Claude. Tap a number to
+  correct it; recent foods can be re-added in one tap. Optional daily target.
 - **Photos** — one waist and one arms photo per week. Compare any week against an
   earlier one side by side or with a before/after slider. With a Claude API key
   (Settings), "Analyse changes" writes notes on visible differences and flags
@@ -14,7 +18,9 @@ take weekly waist and arm progress photos, and see the trends.
 - **Trends** — weight chart (daily weigh-ins + 7-day average + goal line),
   average push-ups per day by week, a week-by-week table, and automatic insights:
   weekly weight change, 4-week rate and ETA to goal, suspicious day-to-day
-  swings, too-fast loss, push-up streaks, records and week-over-week change.
+  swings, too-fast loss, push-up streaks, records and week-over-week change,
+  daily calories vs target, weekly calorie average and a rough maintenance
+  estimate from intake plus weight trend.
 - All data stays on the device (localStorage; photos in IndexedDB). Export/Import
   in Settings includes photos; the API key is never exported.
 
@@ -38,9 +44,9 @@ and switches backends:
 
 | | Web (GitHub Pages) | Artifact |
 |---|---|---|
-| Data | localStorage | `db`, private per signed-in viewer, syncs across devices |
+| Data | localStorage | `db`, private per signed-in viewer, syncs across devices (one doc per month of logs) |
 | Photos | IndexedDB | `assets` |
-| Photo notes | your Claude API key | `sample` (your Claude account, no key) |
+| Photo notes, calorie estimates | your Claude API key | `sample` (your Claude account, no key) |
 | Backup export | browser download | `downloads` |
 
 ```bash

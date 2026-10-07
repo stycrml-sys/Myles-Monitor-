@@ -29,6 +29,8 @@ export interface Platform {
   saveFile(filename: string, text: string): Promise<void>
   /** Built-in photo analysis (artifact); null means "use an API key" (web). */
   analyze: ((req: AnalysisRequest) => Promise<string>) | null
+  /** Built-in quick question answered as JSON (artifact); null on the web. */
+  askJson: ((prompt: string) => Promise<unknown>) | null
 }
 
 // ---------- helpers ----------
@@ -53,6 +55,17 @@ function newId(): string {
 // ---------- web ----------
 
 const STORAGE_KEY = 'fitness-tracker:data:v1'
+const MAIN_DOC = 'fitness'
+
+interface MonthDoc {
+  weights: FitnessData['weights']
+  pushups: FitnessData['pushups']
+  foods: FitnessData['foods']
+}
+
+function monthDoc(date: string): string {
+  return `log-${date.slice(0, 7)}`
+}
 
 function webPlatform(): Platform {
   return {
@@ -94,6 +107,7 @@ function webPlatform(): Platform {
       URL.revokeObjectURL(url)
     },
     analyze: null,
+    askJson: null,
   }
 }
 
@@ -109,6 +123,9 @@ interface DbNs {
     get(): Promise<DocSnap>
     set(data: Record<string, unknown>): Promise<void>
   }
+  collection(path: string): {
+    get(): Promise<{ docs: (DocSnap & { id: string })[] }>
+  }
 }
 interface AssetsNs {
   upload(blob: Blob, options?: { type?: string }): Promise<{ id: string; url: string }>
@@ -117,11 +134,10 @@ interface AssetsNs {
 interface UserNs {
   id(): Promise<string | null>
 }
+type SampleOptions = { images?: Blob[]; modelTier?: string; cache?: boolean }
 interface SampleNs {
-  (input: string, options?: { images?: Blob[]; modelTier?: string; cache?: boolean }): Promise<{
-    text: string
-    truncated: boolean
-  }>
+  (input: string, options?: SampleOptions): Promise<{ text: string; truncated: boolean }>
+  json(input: string, options?: SampleOptions): Promise<unknown>
   limits(): Promise<{ images?: { maxCount: number } }>
 }
 interface DownloadsNs {
@@ -147,18 +163,57 @@ async function artifactPlatform(claude: ClaudeRuntime): Promise<Platform | null>
 
   const uid = user ? await user.id().catch(() => null) : null
   if (!db || !uid) return null
-  const ref = db.doc(`data/users/${uid}/fitness`)
+  const base = `data/users/${uid}`
+
+  // Stored documents are capped at 256 KiB, so daily logs are split into one
+  // document per month (`log-2026-10`); `fitness` holds settings and photo
+  // check-ins. Only documents whose contents changed are written.
+  const written = new Map<string, string>()
+
+  const toDocs = (data: FitnessData): Map<string, Record<string, unknown>> => {
+    const docs = new Map<string, Record<string, unknown>>()
+    docs.set(MAIN_DOC, {
+      version: data.version,
+      // The API key setting is only used by the web build; never store it here.
+      settings: { ...data.settings, apiKey: '' },
+      checkins: data.checkins,
+    })
+    const month = (id: string) => {
+      let doc = docs.get(id) as MonthDoc | undefined
+      if (!doc) {
+        doc = { weights: [], pushups: [], foods: [] }
+        docs.set(id, doc as unknown as Record<string, unknown>)
+      }
+      return doc
+    }
+    for (const w of data.weights) month(monthDoc(w.date)).weights.push(w)
+    for (const p of data.pushups) month(monthDoc(p.date)).pushups.push(p)
+    for (const f of data.foods) month(monthDoc(f.date)).foods.push(f)
+    // A month whose entries were all deleted is written back empty.
+    for (const id of written.keys()) if (!docs.has(id)) docs.set(id, { weights: [], pushups: [], foods: [] })
+    return docs
+  }
 
   // One write at a time; if data changes mid-write, write the latest after.
   let writing: Promise<void> | null = null
   let pending: FitnessData | null = null
   const flush = async () => {
     while (pending) {
-      const next = pending
+      const docs = toDocs(pending)
       pending = null
-      await ref.set(next as unknown as Record<string, unknown>).catch((e) => {
-        console.error('Could not save', e)
-      })
+      // Month logs first, so moving legacy entries out of `fitness` never
+      // leaves them stored nowhere.
+      const ids = [...docs.keys()].sort((a, b) => (a === MAIN_DOC ? 1 : b === MAIN_DOC ? -1 : a.localeCompare(b)))
+      for (const id of ids) {
+        const json = JSON.stringify(docs.get(id))
+        if (written.get(id) === json) continue
+        try {
+          await db.doc(`${base}/${id}`).set(docs.get(id)!)
+          written.set(id, json)
+        } catch (e) {
+          console.error('Could not save', id, e)
+        }
+      }
     }
     writing = null
   }
@@ -169,12 +224,31 @@ async function artifactPlatform(claude: ClaudeRuntime): Promise<Platform | null>
     kind: 'artifact',
     storageNote: 'Your data is saved to your Claude account and syncs across your devices. Photos are stored with this page.',
     async load() {
-      const snap = await ref.get()
-      return snap.exists ? (snap.data() as Partial<FitnessData>) : null
+      const snap = await db.collection(base).get()
+      const found = snap.docs.filter((d) => d.exists)
+      if (!found.length) return null
+      const merged: Partial<FitnessData> & MonthDoc = { weights: [], pushups: [], foods: [] }
+      for (const d of found) {
+        const body = (d.data() ?? {}) as Partial<FitnessData>
+        written.set(d.id, JSON.stringify(body))
+        if (d.id === MAIN_DOC) {
+          merged.version = 1
+          merged.settings = body.settings
+          merged.checkins = body.checkins ?? []
+        }
+        // Older versions kept every entry in the main document; still read them.
+        merged.weights.push(...(body.weights ?? []))
+        merged.pushups.push(...(body.pushups ?? []))
+        merged.foods.push(...(body.foods ?? []))
+      }
+      const newestFirst = (a: { date: string }, b: { date: string }) => b.date.localeCompare(a.date)
+      merged.weights.sort(newestFirst)
+      merged.pushups.sort(newestFirst)
+      merged.foods.sort((a, b) => b.date.localeCompare(a.date) || b.time.localeCompare(a.time))
+      return merged
     },
     async save(data) {
-      // The API key setting is only used by the web build; never store it here.
-      pending = { ...data, settings: { ...data.settings, apiKey: '' } }
+      pending = data
       if (!writing) writing = flush()
       await writing
     },
@@ -229,6 +303,19 @@ async function artifactPlatform(claude: ClaudeRuntime): Promise<Platform | null>
             }
           }
         : null,
+    askJson: sample
+      ? async (prompt) => {
+          try {
+            return await sample.json(prompt, { modelTier: 'quick' })
+          } catch (e) {
+            const code = errorCode(e)
+            if (code === 'rate_limited') throw new Error("You've hit a usage limit. Try again later.")
+            if (code === 'not_granted' || code === 'sampling_disabled')
+              throw new Error('Calorie estimates need permission to use Claude from this page.')
+            throw new Error("Couldn't get an estimate. Enter the calories yourself.")
+          }
+        }
+      : null,
   }
 }
 

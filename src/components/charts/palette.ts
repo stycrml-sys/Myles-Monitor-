@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 export const CHART_COLORS = {
   weight: { light: '#2a78d6', dark: '#3987e5' },
   pushups: { light: '#4a3aa7', dark: '#9085e9' },
+  calories: { light: '#eb6834', dark: '#d95926' },
   grid: { light: '#e1e0d9', dark: '#2a2838' },
   surface: { light: '#ffffff', dark: '#0f172a' },
   axis: '#898781',

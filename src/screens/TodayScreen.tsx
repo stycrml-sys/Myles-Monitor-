@@ -4,32 +4,42 @@ import { inputClass } from '../components/ui/Field'
 import { EmptyState } from '../components/ui/EmptyState'
 import { Card, InsightList } from '../components/Chrome'
 import { useConfirm } from '../components/useConfirm'
+import { FoodCard } from '../components/FoodCard'
+import type { Platform } from '../platform'
 import { genId } from '../storage'
 import {
   buildInsights,
+  caloriesByDay,
   dateKey,
+  formatKcal,
   formatDay,
   formatWeight,
   kgToUnit,
   pushupTotal,
   unitToKg,
 } from '../insights'
-import type { FitnessData, PushupEntry, WeightEntry } from '../types'
+import type { FitnessData, FoodEntry, PushupEntry, WeightEntry } from '../types'
 
 const QUICK_SETS = [5, 10, 15, 20, 25]
 
 export function TodayScreen({
   data,
+  platform,
   onSaveWeight,
   onDeleteWeight,
   onSavePushups,
   onDeletePushups,
+  onSaveFoods,
+  onDeleteFood,
 }: {
   data: FitnessData
+  platform: Platform
   onSaveWeight: (e: WeightEntry) => void
   onDeleteWeight: (id: string) => void
   onSavePushups: (e: PushupEntry) => void
   onDeletePushups: (id: string) => void
+  onSaveFoods: (entries: FoodEntry[]) => void
+  onDeleteFood: (id: string) => void
 }) {
   const confirm = useConfirm()
   const { unit } = data.settings
@@ -69,9 +79,14 @@ export function TodayScreen({
   }
 
   const history = useMemo(() => {
-    const days = new Set([...data.weights.map((w) => w.date), ...data.pushups.map((p) => p.date)])
+    const days = new Set([
+      ...data.weights.map((w) => w.date),
+      ...data.pushups.map((p) => p.date),
+      ...data.foods.map((f) => f.date),
+    ])
     return [...days].sort((a, b) => b.localeCompare(a)).slice(0, 14)
-  }, [data.weights, data.pushups])
+  }, [data.weights, data.pushups, data.foods])
+  const kcalByDay = useMemo(() => caloriesByDay(data.foods), [data.foods])
 
   const isToday = day === dateKey()
 
@@ -189,6 +204,15 @@ export function TodayScreen({
         </div>
       </Card>
 
+      <FoodCard
+        day={day}
+        foods={data.foods}
+        settings={data.settings}
+        platform={platform}
+        onSave={onSaveFoods}
+        onDelete={onDeleteFood}
+      />
+
       <div>
         <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Insights</h2>
         <InsightList insights={insights} />
@@ -215,9 +239,10 @@ export function TodayScreen({
                   }`}
                 >
                   <span className="font-medium text-slate-700 dark:text-slate-200">{formatDay(d)}</span>
-                  <span className="flex gap-4 tabular-nums text-slate-500 dark:text-slate-400">
+                  <span className="grid grid-cols-[4.5rem_4.5rem_4.5rem] gap-2 text-right text-xs tabular-nums text-slate-500 dark:text-slate-400">
                     <span>{w ? formatWeight(w.weightKg, unit) : '—'}</span>
-                    <span className="w-20 text-right">{p ? `${pushupTotal(p)} push-ups` : '—'}</span>
+                    <span>{p ? `${pushupTotal(p)} reps` : '—'}</span>
+                    <span>{kcalByDay.has(d) ? formatKcal(kcalByDay.get(d)!) : '—'}</span>
                   </span>
                 </button>
               )

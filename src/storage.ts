@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { blobToDataUrl, dataUrlToBlob, getPlatform, type Platform } from './platform'
-import type { FitnessData, FitnessSettings, PhotoCheckin, PushupEntry, WeightEntry } from './types'
+import type { FitnessData, FitnessSettings, FoodEntry, PhotoCheckin, PushupEntry, WeightEntry } from './types'
 
 function defaultSettings(): FitnessSettings {
-  return { name: '', unit: 'kg', goalWeightKg: null, pushupGoal: null, apiKey: '' }
+  return { name: '', unit: 'kg', goalWeightKg: null, pushupGoal: null, calorieGoal: null, apiKey: '' }
 }
 
 function normalize(parsed: Partial<FitnessData>): FitnessData {
@@ -12,6 +12,7 @@ function normalize(parsed: Partial<FitnessData>): FitnessData {
     settings: { ...defaultSettings(), ...parsed.settings },
     weights: parsed.weights ?? [],
     pushups: parsed.pushups ?? [],
+    foods: parsed.foods ?? [],
     checkins: parsed.checkins ?? [],
   }
 }
@@ -117,6 +118,21 @@ export function useFitnessData() {
     [update],
   )
 
+  const saveFoods = useCallback(
+    (entries: FoodEntry[]) =>
+      update((d) => {
+        const ids = new Set(entries.map((e) => e.id))
+        const foods = [...entries, ...d.foods.filter((f) => !ids.has(f.id))]
+        foods.sort((a, b) => b.date.localeCompare(a.date) || b.time.localeCompare(a.time))
+        return { ...d, foods }
+      }),
+    [update],
+  )
+  const deleteFood = useCallback(
+    (id: string) => update((d) => ({ ...d, foods: d.foods.filter((f) => f.id !== id) })),
+    [update],
+  )
+
   const saveCheckin = useCallback(
     (entry: PhotoCheckin) =>
       update((d) => ({
@@ -184,6 +200,8 @@ export function useFitnessData() {
     deleteWeight,
     savePushups,
     deletePushups,
+    saveFoods,
+    deleteFood,
     saveCheckin,
     deleteCheckin,
     exportData,

@@ -20,6 +20,10 @@ import { EmptyState } from '../components/ui/EmptyState'
 import { InsightList } from '../components/Chrome'
 import {
   buildInsights,
+  calorieSeries,
+  calorieWeeks,
+  estimateMaintenance,
+  formatKcal,
   formatWeight,
   kgToUnit,
   pushupTotal,
@@ -42,35 +46,40 @@ export function TrendsScreen({ data }: { data: FitnessData }) {
   const isDark = useIsDark()
   const weightColor = isDark ? CHART_COLORS.weight.dark : CHART_COLORS.weight.light
   const pushColor = isDark ? CHART_COLORS.pushups.dark : CHART_COLORS.pushups.light
-  const { unit, goalWeightKg, pushupGoal } = data.settings
+  const calColor = isDark ? CHART_COLORS.calories.dark : CHART_COLORS.calories.light
+  const { unit, goalWeightKg, pushupGoal, calorieGoal } = data.settings
 
   const [range, setRange] = useState<Range>('56')
   const days = Number(range)
 
   const series = useMemo(() => weightSeries(data.weights, unit, days), [data.weights, unit, days])
   const weeks = useMemo(() => pushupWeeks(data.pushups, days / 7), [data.pushups, days])
+  const calSeries = useMemo(() => calorieSeries(data.foods, days), [data.foods, days])
+  const calWeeks = useMemo(() => calorieWeeks(data.foods, days / 7), [data.foods, days])
+  const maintenance = useMemo(() => estimateMaintenance(data), [data])
   const summary = useMemo(() => weekSummary(data), [data])
   const insights = useMemo(() => buildInsights(data), [data])
 
   const weeklyRows = useMemo(
     () =>
       weeks
-        .map((w) => {
+        .map((w, i) => {
           const ws = data.weights.filter((x) => x.date >= w.weekStart && x.date < shiftDays(w.weekStart, 7))
           return {
             ...w,
             avgKg: ws.length ? ws.reduce((a, x) => a + x.weightKg, 0) / ws.length : null,
             weighIns: ws.length,
+            kcal: calWeeks[i],
           }
         })
         .reverse(),
-    [weeks, data.weights],
+    [weeks, calWeeks, data.weights],
   )
 
   const bestDay = data.pushups.length ? Math.max(...data.pushups.map(pushupTotal)) : 0
   const goalInUnit = goalWeightKg !== null ? Math.round(kgToUnit(goalWeightKg, unit) * 10) / 10 : null
 
-  const hasData = data.weights.length > 0 || data.pushups.length > 0
+  const hasData = data.weights.length > 0 || data.pushups.length > 0 || data.foods.length > 0
   if (!hasData) {
     return (
       <div className="p-4">
@@ -129,6 +138,22 @@ export function TrendsScreen({ data }: { data: FitnessData }) {
           label="Best day"
           value={String(bestDay)}
           sub={summary.streak > 0 ? `${summary.streak}-day streak` : undefined}
+        />
+        <StatTile
+          icon="🍽️"
+          label="Calories / day"
+          value={summary.calThisWeek.days ? summary.calThisWeek.avg.toLocaleString('en') : '—'}
+          sub={
+            summary.calThisWeek.days && summary.calLastWeek.days
+              ? `${summary.calThisWeek.avg >= summary.calLastWeek.avg ? '+' : '−'}${Math.abs(summary.calThisWeek.avg - summary.calLastWeek.avg).toLocaleString('en')} vs last week`
+              : `${summary.calThisWeek.days}/7 days logged`
+          }
+        />
+        <StatTile
+          icon="🔥"
+          label="Maintenance (est.)"
+          value={maintenance !== null ? maintenance.toLocaleString('en') : '—'}
+          sub={maintenance !== null ? 'kcal/day, from intake + weight trend' : 'Needs 2+ weeks of food logs'}
         />
       </div>
 
@@ -249,6 +274,54 @@ export function TrendsScreen({ data }: { data: FitnessData }) {
         </div>
       </ChartCard>
 
+      <ChartCard title="Calories — daily total">
+        <div className="h-44">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={calSeries} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid vertical={false} stroke={grid} />
+              <XAxis
+                dataKey="label"
+                tick={axisTick}
+                axisLine={{ stroke: grid }}
+                tickLine={false}
+                interval="preserveStartEnd"
+                minTickGap={24}
+              />
+              <YAxis
+                allowDecimals={false}
+                tick={axisTick}
+                axisLine={false}
+                tickLine={false}
+                width={36}
+                tickFormatter={(v: number) => (v >= 1000 ? `${+(v / 1000).toFixed(1)}k` : String(v))}
+              />
+              {calorieGoal ? (
+                <ReferenceLine
+                  y={calorieGoal}
+                  stroke={CHART_COLORS.axis}
+                  strokeDasharray="4 4"
+                  label={{ value: 'Target', position: 'insideTopRight', fontSize: 10, fill: CHART_COLORS.axis }}
+                  ifOverflow="extendDomain"
+                />
+              ) : null}
+              <Tooltip
+                cursor={{ fill: cursorFill }}
+                content={(props) => (
+                  <ChartTooltip
+                    active={props.active}
+                    label={props.label as string}
+                    payload={props.payload
+                      ?.filter((p) => p.value !== null && p.value !== undefined)
+                      .map((p) => ({ name: 'Eaten', value: formatKcal(p.value as number), color: calColor }))}
+                  />
+                )}
+              />
+              <Bar dataKey="kcal" fill={calColor} radius={[4, 4, 0, 0]} maxBarSize={14} isAnimationActive={false} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </ChartCard>
+
       <div className="overflow-hidden rounded-2xl bg-white shadow-sm dark:bg-slate-900">
         <h3 className="px-4 pb-2 pt-4 text-sm font-semibold text-slate-700 dark:text-slate-200">
           Week by week
@@ -258,8 +331,8 @@ export function TrendsScreen({ data }: { data: FitnessData }) {
             <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
               <th className="px-4 py-1.5 font-medium">Week</th>
               <th className="py-1.5 font-medium">Avg weight</th>
-              <th className="py-1.5 font-medium">Change</th>
-              <th className="px-4 py-1.5 text-right font-medium">Push-ups/day</th>
+              <th className="py-1.5 text-right font-medium">Push-ups/day</th>
+              <th className="px-4 py-1.5 text-right font-medium">kcal/day</th>
             </tr>
           </thead>
           <tbody>
@@ -269,11 +342,13 @@ export function TrendsScreen({ data }: { data: FitnessData }) {
               return (
                 <tr key={row.weekStart} className="border-t border-slate-100 text-slate-700 dark:border-slate-800 dark:text-slate-200">
                   <td className="px-4 py-2">{row.label}</td>
-                  <td className="py-2">{row.avgKg !== null ? formatWeight(row.avgKg, unit) : '—'}</td>
-                  <td className="py-2 text-slate-500 dark:text-slate-400">
-                    {change !== null ? formatWeight(change, unit, true) : '—'}
+                  <td className="py-2">
+                    {row.avgKg !== null ? formatWeight(row.avgKg, unit) : '—'}
+                    {change !== null && (
+                      <span className="block text-[11px] text-slate-400">{formatWeight(change, unit, true)}</span>
+                    )}
                   </td>
-                  <td className="px-4 py-2 text-right">
+                  <td className="py-2 text-right">
                     {row.daysLogged ? (
                       <>
                         {row.avgPerDay}
@@ -282,6 +357,9 @@ export function TrendsScreen({ data }: { data: FitnessData }) {
                     ) : (
                       '—'
                     )}
+                  </td>
+                  <td className="px-4 py-2 text-right">
+                    {row.kcal?.daysLogged ? row.kcal.avgPerDay.toLocaleString('en') : '—'}
                   </td>
                 </tr>
               )

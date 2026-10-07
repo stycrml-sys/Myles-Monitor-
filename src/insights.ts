@@ -1,5 +1,5 @@
 import { addDays, format, parseISO, startOfWeek } from 'date-fns'
-import type { FitnessData, PushupEntry, WeightEntry, WeightUnit } from './types'
+import type { FitnessData, FoodEntry, PushupEntry, WeightEntry, WeightUnit } from './types'
 
 const KG_PER_LB = 0.45359237
 
@@ -93,6 +93,72 @@ function pushupStreak(pushups: PushupEntry[]): number {
   return streak
 }
 
+// ---------- calories ----------
+
+export function formatKcal(n: number): string {
+  return `${Math.round(n).toLocaleString('en')} kcal`
+}
+
+/** Total calories per logged day (unestimated items count as 0). */
+export function caloriesByDay(foods: FoodEntry[]): Map<string, number> {
+  const out = new Map<string, number>()
+  for (const f of foods) out.set(f.date, (out.get(f.date) ?? 0) + (f.calories ?? 0))
+  return out
+}
+
+export interface CalorieWeek {
+  weekStart: string
+  label: string
+  daysLogged: number
+  avgPerDay: number // over logged days
+}
+
+/**
+ * Average daily calories over the days with food logged in [start, end).
+ * Today is left out: a day still in progress would drag every average down.
+ */
+function avgCalories(byDay: Map<string, number>, start: string, endExclusive: string) {
+  const today = dateKey()
+  let total = 0
+  let days = 0
+  for (const [date, kcal] of byDay) {
+    if (date >= start && date < endExclusive && date !== today) {
+      total += kcal
+      days++
+    }
+  }
+  return { days, avg: days ? Math.round(total / days) : 0 }
+}
+
+export function calorieWeeks(foods: FoodEntry[], weeks = 8): CalorieWeek[] {
+  const byDay = caloriesByDay(foods)
+  const current = weekStartKey(dateKey())
+  const out: CalorieWeek[] = []
+  for (let i = weeks - 1; i >= 0; i--) {
+    const start = shiftDays(current, -7 * i)
+    const { days, avg } = avgCalories(byDay, start, shiftDays(start, 7))
+    out.push({ weekStart: start, label: format(parseISO(start), 'MMM d'), daysLogged: days, avgPerDay: avg })
+  }
+  return out
+}
+
+export interface CaloriePoint {
+  date: string
+  label: string
+  kcal: number | null
+}
+
+export function calorieSeries(foods: FoodEntry[], days = 28): CaloriePoint[] {
+  const byDay = caloriesByDay(foods)
+  const today = dateKey()
+  const out: CaloriePoint[] = []
+  for (let i = days - 1; i >= 0; i--) {
+    const date = shiftDays(today, -i)
+    out.push({ date, label: format(parseISO(date), 'MMM d'), kcal: byDay.get(date) ?? null })
+  }
+  return out
+}
+
 // ---------- weight ----------
 
 export interface WeightPoint {
@@ -160,6 +226,9 @@ export interface WeekSummary {
   pushThisWeek: PushupWeek
   pushLastWeek: PushupWeek
   streak: number
+  calToday: number | null
+  calThisWeek: { days: number; avg: number }
+  calLastWeek: { days: number; avg: number }
 }
 
 export function weekSummary(data: FitnessData): WeekSummary {
@@ -175,7 +244,24 @@ export function weekSummary(data: FitnessData): WeekSummary {
     pushThisWeek: weeks[1],
     pushLastWeek: weeks[0],
     streak: pushupStreak(data.pushups),
+    calToday: caloriesByDay(data.foods).get(today) ?? null,
+    calThisWeek: avgCalories(caloriesByDay(data.foods), thisWeek, shiftDays(thisWeek, 7)),
+    calLastWeek: avgCalories(caloriesByDay(data.foods), lastWeek, thisWeek),
   }
+}
+
+/**
+ * Rough maintenance calories from the last 4 weeks: average intake minus the
+ * energy implied by the weight trend (~7,700 kcal per kg). Needs at least 14
+ * days of food logs in that window, or it's too noisy to show.
+ */
+export function estimateMaintenance(data: FitnessData): number | null {
+  const rate = weightRateKgPerWeek(data.weights)
+  if (rate === null) return null
+  const today = dateKey()
+  const { days, avg } = avgCalories(caloriesByDay(data.foods), shiftDays(today, -27), shiftDays(today, 1))
+  if (days < 14) return null
+  return Math.round((avg - (rate * 7700) / 7) / 10) * 10
 }
 
 export function buildInsights(data: FitnessData): Insight[] {
@@ -293,6 +379,61 @@ export function buildInsights(data: FitnessData): Insight[] {
       tone: 'info',
       text: `${pushupGoal - tw.avgPerDay} more a day on average to hit your ${pushupGoal}/day goal this week.`,
     })
+  }
+
+  // --- calories ---
+  const { calorieGoal } = data.settings
+  if (data.foods.length > 0) {
+    if (s.calToday === null) {
+      out.push({ icon: '🍽️', tone: 'info', text: "No food logged today yet." })
+    } else if (calorieGoal) {
+      const left = calorieGoal - s.calToday
+      out.push({
+        icon: '🍽️',
+        tone: left >= 0 ? 'info' : 'warn',
+        text:
+          left >= 0
+            ? `${formatKcal(s.calToday)} so far today, ${formatKcal(left)} left of your ${formatKcal(calorieGoal)} target.`
+            : `${formatKcal(s.calToday)} today, ${formatKcal(-left)} over your ${formatKcal(calorieGoal)} target.`,
+      })
+    }
+
+    const cw = s.calThisWeek
+    const cl = s.calLastWeek
+    if (cw.days >= 2) {
+      let text = `Averaging ${formatKcal(cw.avg)} a day this week (completed days)`
+      let tone: Tone = 'info'
+      if (cl.days >= 2) {
+        const diff = cw.avg - cl.avg
+        text += Math.abs(diff) < 50 ? ', about the same as last week.' : `, ${diff > 0 ? 'up' : 'down'} ${formatKcal(Math.abs(diff))} on last week.`
+      } else text += '.'
+      if (calorieGoal) {
+        const off = cw.avg - calorieGoal
+        if (Math.abs(off) > calorieGoal * 0.1) {
+          tone = 'warn'
+          text += ` That's ${formatKcal(Math.abs(off))} ${off > 0 ? 'above' : 'below'} your target.`
+        } else tone = 'good'
+      }
+      out.push({ icon: '📊', tone, text })
+    }
+
+    const maintenance = estimateMaintenance(data)
+    if (maintenance !== null && s.rateKgPerWeek !== null) {
+      out.push({
+        icon: '🔥',
+        tone: 'info',
+        text: `Rough maintenance estimate: ${formatKcal(maintenance)}/day, from 4 weeks of intake and your weight trend (${formatWeight(s.rateKgPerWeek, unit, true)}/week).`,
+      })
+    }
+
+    const unestimated = data.foods.filter((f) => f.date === today && f.calories === null).length
+    if (unestimated) {
+      out.push({
+        icon: '✏️',
+        tone: 'warn',
+        text: `${unestimated} food${unestimated === 1 ? '' : 's'} today still need${unestimated === 1 ? 's' : ''} a calorie number.`,
+      })
+    }
   }
 
   // --- photos ---

@@ -31,6 +31,7 @@ export function FitnessSettingsSheet({
   const [unit, setUnit] = useState<WeightUnit>(settings.unit)
   const [goal, setGoal] = useState('')
   const [pushGoal, setPushGoal] = useState('')
+  const [calGoal, setCalGoal] = useState('')
   const [apiKey, setApiKey] = useState(settings.apiKey)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const confirm = useConfirm()
@@ -48,6 +49,7 @@ export function FitnessSettingsSheet({
         : '',
     )
     setPushGoal(settings.pushupGoal ? String(settings.pushupGoal) : '')
+    setCalGoal(settings.calorieGoal ? String(settings.calorieGoal) : '')
     setApiKey(settings.apiKey)
   }, [open, settings])
 
@@ -60,11 +62,13 @@ export function FitnessSettingsSheet({
   const save = () => {
     const g = parseFloat(goal)
     const p = parseInt(pushGoal, 10)
+    const c = parseInt(calGoal, 10)
     onSave({
       name: name.trim(),
       unit,
       goalWeightKg: Number.isFinite(g) && g > 0 ? unitToKg(g, unit) : null,
       pushupGoal: p > 0 ? p : null,
+      calorieGoal: c > 0 ? c : null,
       apiKey: apiKey.trim(),
     })
     onClose()
@@ -125,9 +129,20 @@ export function FitnessSettingsSheet({
             />
           </Field>
         </div>
+        <Field label="Daily calorie target (kcal)">
+          <input
+            id="calorie-goal"
+            type="number"
+            inputMode="numeric"
+            className={inputClass}
+            value={calGoal}
+            onChange={(e) => setCalGoal(e.target.value)}
+            placeholder="Optional, e.g. 2200"
+          />
+        </Field>
         {platform.kind === 'web' && (
           <>
-            <Field label="Claude API key (for photo analysis)">
+            <Field label="Claude API key (optional)">
               <input
                 type="password"
                 autoComplete="off"
@@ -138,8 +153,9 @@ export function FitnessSettingsSheet({
               />
             </Field>
             <p className="-mt-2 text-xs text-slate-400">
-              Optional. Stored only on this device and sent only to Anthropic when you tap “Analyse”.
-              Get one at console.anthropic.com. Each analysis costs a few cents.
+              Optional. Used for photo notes and for estimating calories of foods the app doesn't
+              know. Stored only on this device and sent only to Anthropic. Get one at
+              console.anthropic.com.
             </p>
           </>
         )}

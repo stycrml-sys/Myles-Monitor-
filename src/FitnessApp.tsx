@@ -19,6 +19,8 @@ export default function FitnessApp() {
     deleteWeight,
     savePushups,
     deletePushups,
+    saveFoods,
+    deleteFood,
     saveCheckin,
     deleteCheckin,
     exportData,
@@ -43,10 +45,13 @@ export default function FitnessApp() {
           {tab === 'today' && (
             <TodayScreen
               data={data}
+              platform={platform}
               onSaveWeight={saveWeight}
               onDeleteWeight={deleteWeight}
               onSavePushups={savePushups}
               onDeletePushups={deletePushups}
+              onSaveFoods={saveFoods}
+              onDeleteFood={deleteFood}
             />
           )}
           {tab === 'photos' && (

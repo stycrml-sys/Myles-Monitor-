@@ -14,6 +14,15 @@ export interface PushupEntry {
   comment: string
 }
 
+export interface FoodEntry {
+  id: string
+  date: string // yyyy-mm-dd
+  time: string // ISO datetime it was logged, for ordering within the day
+  name: string
+  calories: number | null // null until estimated or entered
+  source: 'table' | 'claude' | 'manual'
+}
+
 export type BodyArea = 'waist' | 'arms'
 
 export interface PhotoCheckin {
@@ -32,6 +41,7 @@ export interface FitnessSettings {
   unit: WeightUnit
   goalWeightKg: number | null
   pushupGoal: number | null // daily reps
+  calorieGoal: number | null // daily kcal
   apiKey: string
 }
 
@@ -40,6 +50,7 @@ export interface FitnessData {
   settings: FitnessSettings
   weights: WeightEntry[]
   pushups: PushupEntry[]
+  foods: FoodEntry[] // newest first
   checkins: PhotoCheckin[]
 }
 
